@@ -27,7 +27,7 @@ def limpar_tela():
 
 def exibir_cabecalho():
     titulo = Text("SISTEMA GRC - AUDITORIA DE ATIVOS", style="bold white on blue", justify="center")
-    rprint(Panel(titulo, subtitle="v33.0 - Final Edition (Bcrypt + SHA-256 + Search)", border_style="bright_blue"))
+    rprint(Panel(titulo, subtitle="v36.0 - Edição Estabilizada e Revisada", border_style="bright_blue"))
 
 def formatar_cpf(valor):
     numeros = re.sub(r'\D', '', str(valor))
@@ -35,6 +35,7 @@ def formatar_cpf(valor):
     return f"{numeros[:3]}.{numeros[3:6]}.{numeros[6:9]}-{numeros[9:]}"
 
 def formatar_data(valor):
+    if not valor or valor == "0": return "---"
     numeros = re.sub(r'\D', '', str(valor))
     if len(numeros) != 8: return valor
     return f"{numeros[:2]}/{numeros[2:4]}/{numeros[4:]}"
@@ -59,7 +60,8 @@ class AppCiberLGPD:
                 res = session.run("MATCH (a:Admin {username: $u}) RETURN a.password as h, a.name as n", u=u).single()
                 if res and bcrypt.checkpw(p.encode('utf-8'), res['h'].encode('utf-8')):
                     self.usuario_logado = u; return True
-        except: pass
+        except Exception as e:
+            rprint(f"[red]Erro na conexão com o Banco: {e}[/red]")
         if u == os.getenv("ADMIN_USER") and p == os.getenv("ADMIN_PASS"):
             self.usuario_logado = u; return True
         return False
@@ -72,7 +74,7 @@ class AppCiberLGPD:
             WITH u MATCH (h:Host {hostname: $host}) MERGE (u)-[:ACCESSES]->(h)
             """
             session.run(query, nome=nome, cpf=cpf, host=host, cargo=cargo, data=data_adm)
-            rprint("[bold green]✅ Usuário cadastrado e vinculado![/bold green]")
+            rprint("[bold green]✅ Operação concluída com sucesso![/bold green]")
 
     def buscar_por_nome(self, nome):
         with self.driver.session() as session:
@@ -102,7 +104,7 @@ class AppCiberLGPD:
         with self.driver.session() as session:
             if acao == "criar": session.run("MERGE (h:Host {hostname: $n})", n=hostname)
             else: session.run("MATCH (h:Host {hostname: $n}) DETACH DELETE h", n=hostname)
-            rprint(f"[green]Host {hostname} processado.[/green]")
+            rprint(f"[green]Host {hostname} atualizado.[/green]")
 
     def gerar_relatorio_pdf(self):
         pdf = FPDF(); pdf.add_page(); pdf.set_font("Helvetica", 'B', 16)
@@ -124,74 +126,109 @@ class AppCiberLGPD:
         nome_pdf = f"Relatorio_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         pdf.output(nome_pdf)
         
-        # --- CÁLCULO SHA-256 (INTEGRIDADE FORENSE) ---
         with open(nome_pdf, "rb") as f:
             hash_sha = hashlib.sha256(f.read()).hexdigest()
         
-        rprint(Panel(f"[bold green]✅ PDF GERADO COM SUCESSO![/]\n[cyan]Arquivo:[/] {nome_pdf}\n[yellow]SHA-256:[/] {hash_sha}", border_style="green", title="Assinatura Digital"))
+        rprint(Panel(f"[bold green]✅ PDF GERADO![/]\n[cyan]Arquivo:[/] {nome_pdf}\n[yellow]SHA-256:[/] {hash_sha}", border_style="green"))
+
+        try:
+            if platform.system() == "Windows": os.startfile(nome_pdf)
+            elif platform.system() == "Darwin": os.system(f"open {nome_pdf}")
+            else: os.system(f"xdg-open {nome_pdf}")
+        except: pass
 
 # --- MENU PRINCIPAL ---
 def main():
+    app = None
     try:
         app = AppCiberLGPD()
         if not app.login(): rprint("[red]Falha no Login![/red]"); return
         
         while True:
             limpar_tela(); exibir_cabecalho()
-            rprint(Panel("[1] Cadastrar | [2] Buscar | [3] Demitir | [4] PDF | [5] Hosts | [0] Sair", border_style="bright_blue"))
+            rprint(Panel("[bold cyan][1][/] Cadastrar  [bold cyan][2][/] Buscar  [bold cyan][3][/] Demitir\n[bold cyan][4][/] Gerar PDF  [bold cyan][5][/] Hosts   [bold red][0][/] Sair", title="MENU PRINCIPAL", border_style="bright_blue"))
             op = Prompt.ask("Opção", choices=["1", "2", "3", "4", "5", "0"])
 
-            if op == "0": break
+            if op == "0": 
+                if app: app.driver.close()
+                break
             
             elif op == "1":
-                n = Prompt.ask("Nome"); raw_c = Prompt.ask("CPF (11 num)"); c = formatar_cpf(raw_c)
-                if c: app.vincular_usuario(n, c, Prompt.ask("Host"), Prompt.ask("Cargo"), formatar_data(Prompt.ask("Data Adm")))
+                rprint("[yellow](Digite 0 em qualquer campo para voltar)[/yellow]")
+                n = Prompt.ask("Nome"); 
+                if n == "0": continue
+                raw_c = Prompt.ask("CPF (11 num)"); 
+                if raw_c == "0": continue
+                c = formatar_cpf(raw_c)
+                if c: 
+                    h = Prompt.ask("Host"); 
+                    if h == "0": continue
+                    cr = Prompt.ask("Cargo"); 
+                    if cr == "0": continue
+                    dt = formatar_data(Prompt.ask("Data Adm (DDMMAAAA)")); 
+                    if dt == "0": continue
+                    app.vincular_usuario(n, c, h, cr, dt)
                 else: rprint("[red]CPF Inválido![/red]")
                 Prompt.ask("\n[Enter] para voltar")
 
             elif op == "2":
-                busca = Prompt.ask("Nome ou CPF")
+                busca = Prompt.ask("Nome ou CPF (ou '0' p/ voltar)")
+                if busca == "0": continue
                 if busca.isdigit() and len(busca) == 11: app.buscar_por_cpf(formatar_cpf(busca))
                 else:
                     lista = app.buscar_por_nome(busca)
                     if not lista: rprint("[red]Nenhum resultado.[/red]")
                     else:
                         for i, r in enumerate(lista): rprint(f"[{i}] {r['nome']} ({r['status']})")
-                        idx = Prompt.ask("Escolha o número ou [Enter] para sair", default="")
-                        if idx: app.buscar_por_cpf(lista[int(idx)]['cpf'])
+                        idx = Prompt.ask("Número ou [Enter] p/ sair", default="")
+                        if idx == "0": continue
+                        if idx.isdigit(): # Correção: Verifica se é número antes de converter
+                            try: app.buscar_por_cpf(lista[int(idx)]['cpf'])
+                            except: rprint("[red]Opção inválida.[/red]")
                 Prompt.ask("\n[Enter] para voltar")
 
             elif op == "3":
-                rprint("[yellow]--- MÓDULO DE DESLIGAMENTO (GRC) ---[/yellow]")
-                busca = Prompt.ask("Informe o Nome ou CPF do colaborador")
+                rprint("[yellow]--- DESLIGAMENTO (Digite 0 p/ voltar) ---[/yellow]")
+                busca = Prompt.ask("Informe o Nome ou CPF")
+                if busca == "0": continue
                 cpf_alvo = None
-                
-                if busca.isdigit() and len(busca) == 11:
+                if busca.isdigit() and len(busca) == 11: 
                     cpf_alvo = formatar_cpf(busca)
                 else:
                     lista = app.buscar_por_nome(busca)
                     if lista:
                         for i, r in enumerate(lista): rprint(f"[{i}] {r['nome']} - CPF: {r['cpf']}")
-                        idx = Prompt.ask("Escolha o número do colaborador para DEMITIR")
-                        cpf_alvo = lista[int(idx)]['cpf']
+                        idx = Prompt.ask("Escolha o número p/ DEMITIR")
+                        if idx == "0": continue
+                        if idx.isdigit():
+                            try: cpf_alvo = lista[int(idx)]['cpf']
+                            except: rprint("[red]Opção inválida.[/red]")
                 
                 if cpf_alvo:
-                    data_d = formatar_data(Prompt.ask("Data de Demissão (DDMMAAAA)"))
-                    if Prompt.ask(f"Confirma demissão do CPF {cpf_alvo}?", choices=["s", "n"]) == "s":
+                    data_d = formatar_data(Prompt.ask("Data Demissão (DDMMAAAA)"))
+                    if data_d == "0": continue
+                    if Prompt.ask(f"Confirmar demissão do CPF {cpf_alvo}?", choices=["s", "n"]) == "s":
                         app.demitir_usuario(cpf_alvo, data_d)
-                else: rprint("[red]Colaborador não localizado.[/red]")
+                else:
+                    rprint("[red]Colaborador não localizado.[/red]")
                 Prompt.ask("\n[Enter] para voltar")
 
-            elif op == "4": app.gerar_relatorio_pdf(); Prompt.ask("\n[Enter] para voltar")
+            elif op == "4": 
+                app.gerar_relatorio_pdf()
+                Prompt.ask("\n[Enter] para voltar")
             
             elif op == "5":
-                sub = Prompt.ask("[1] Adicionar Host [2] Remover Host", choices=["1","2"])
-                app.gerenciar_hosts("criar" if sub=="1" else "excluir", Prompt.ask("Hostname"))
+                sub = Prompt.ask("[1] Adicionar Host [2] Remover Host [0] Voltar", choices=["1","2","0"])
+                if sub == "0": continue
+                host_n = Prompt.ask("Hostname")
+                if host_n != "0": app.gerenciar_hosts("criar" if sub=="1" else "excluir", host_n)
                 Prompt.ask("\n[Enter] para voltar")
 
     except Exception as e:
         rprint(Panel(f"[bold red]ERRO CRÍTICO:[/bold red] {e}", border_style="red"))
-        input("\nPressione ENTER para fechar o programa...")
+        input("\nPressione ENTER para fechar...")
+    finally:
+        if app: app.driver.close()
 
 if __name__ == "__main__":
     main()
